@@ -1,3 +1,4 @@
+# Compile, validate and upload the package to GitHub Releases.
 name: Build and release
 on:
   push:
