@@ -4,6 +4,6 @@ Automatically marks muted Messages app as read. Mute chats using **Hide Alerts**
 
 Settings includes an enable switch and GitHub link. Changes apply without a respring.
 
-You can use to hide monthly network messages than you will never read or similar.
+You can use to hide monthly network messages that you will never read or similar.
 
 For iOS 16 Dopamine/rootless. Install the `.deb` from Releases and respring once. Enabled read receipts may be sent.
