@@ -1,4 +1,5 @@
 #!/bin/bash
+# Build both signed rootless binaries before packaging.
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build packages
