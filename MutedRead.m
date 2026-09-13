@@ -1,3 +1,4 @@
+// Observe muted chats and use the native mark-as-read action.
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
