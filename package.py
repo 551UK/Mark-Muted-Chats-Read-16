@@ -70,6 +70,26 @@ control = tar_gz([('./control', (ROOT / 'control').read_bytes(), 0o644)])
 base = './var/jb/Library/MobileSubstrate/DynamicLibraries/'
 entries = [(base + 'MutedRead.dylib', binary, 0o755),
            (base + 'MutedRead.plist', (ROOT / 'MutedRead.plist').read_bytes(), 0o644)]
+prefs_binary = (ROOT / 'build/MutedReadPrefs').read_bytes()
+validate_macho(prefs_binary)
+bundle = './var/jb/Library/PreferenceBundles/MutedReadPrefs.bundle/'
+loader = './var/jb/Library/PreferenceLoader/Preferences/'
+entries.append((bundle + 'MutedReadPrefs', prefs_binary, 0o755))
+info = plistlib.loads((ROOT / 'prefs/Info.plist').read_bytes())
+entry = plistlib.loads((ROOT / 'prefs/entry.plist').read_bytes())['entry']
+assert info['CFBundleExecutable'] == entry['bundle'] == 'MutedReadPrefs'
+assert info['NSPrincipalClass'] == entry['detail'] == 'MRRootController'
+assert entry['icon'] == 'MutedRead.png'
+assert entry['bundlePath'] == '/var/jb/Library/PreferenceBundles/MutedReadPrefs.bundle'
+entries.append((bundle + 'Info.plist', (ROOT / 'prefs/Info.plist').read_bytes(), 0o644))
+entries.append((loader + 'MutedRead.plist', (ROOT / 'prefs/entry.plist').read_bytes(), 0o644))
+for scale, suffix in [(1, ''), (2, '@2x'), (3, '@3x')]:
+    icon = (ROOT / 'prefs/icons' / f'icon{suffix}.png').read_bytes()
+    assert icon[:8] == bytes([137,80,78,71,13,10,26,10])
+    assert struct.unpack_from('>II', icon, 16) == (29 * scale, 29 * scale)
+    entries.extend([(loader + f'MutedRead{suffix}.png', icon, 0o644),
+                    (bundle + f'MutedRead{suffix}.png', icon, 0o644),
+                    (bundle + f'icon{suffix}.png', icon, 0o644)])
 assert len({e[0] for e in entries}) == len(entries)
 data = tar_gz(entries, include_directories=True)
 out = bytearray(b'!<arch>\n')
@@ -82,7 +102,7 @@ for name, body in [('debian-binary', b'2.0\n'), ('control.tar.gz', control), ('d
 path = ROOT / 'packages' / f'{fields["Package"]}_{fields["Version"]}_{fields["Architecture"]}.deb'
 path.parent.mkdir(exist_ok=True)
 path.write_bytes(out)
-# Confirm payload inventory and byte identity; never ship the supplied Glow DEB.
+# Confirm payload inventory, ownership, permissions and byte identity.
 with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
     assert [m.name for m in archive.getmembers() if m.isfile()] == [e[0] for e in entries]
     members = {m.name: m for m in archive.getmembers()}

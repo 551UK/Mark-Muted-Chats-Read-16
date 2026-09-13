@@ -3,6 +3,8 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #include <string.h>
+#import "ReadPreferences.h"
+static BOOL enabled = YES;
 
 // Only invoke selectors whose runtime ABI matches the signature we use.
 static BOOL Matches(Class cls, SEL sel, const char *result, NSArray<NSString *> *args) {
@@ -23,6 +25,7 @@ static BOOL Supports(id obj, SEL sel, const char *result) {
 }
 
 static void MarkChat(id chat) {
+    if (!enabled) return;
     SEL muted = sel_registerName("__ck_isMuted");
     SEL unread = sel_registerName("unreadMessageCount");
     SEL mark = sel_registerName("markAllMessagesAsRead");
@@ -88,7 +91,14 @@ static void HookObject(Class cls, NSString *name, BOOL conversation) {
     class_replaceMethod(cls, sel, replacement, method_getTypeEncoding(method));
 }
 
+static void PreferencesChanged(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+    dispatch_async(dispatch_get_main_queue(), ^{ enabled = MREnabled(); if (enabled) ScanChats(); });
+}
+
 static void Install(void) {
+    enabled = MREnabled();
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, PreferencesChanged, MR_CHANGED, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY);
     Class chat = NSClassFromString(@"IMChat");
     HookObject(chat, @"__ck_setMuteUntilDate:", NO);
