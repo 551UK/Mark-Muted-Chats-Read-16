@@ -1,2 +1,3 @@
+# Keep generated files out of the source repository.
 build/
 packages/
