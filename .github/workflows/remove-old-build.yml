@@ -1,0 +1,22 @@
+name: Remove old build
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/remove-old-build.yml']
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep final build and remove v1.0.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view v1.1.0 --json assets --jq '.assets[].name' | grep -Fx 'com.551uk.markmutedchatsread16_1.1.0_iphoneos-arm64.deb'
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release delete v1.0.0 --yes
+          fi
+          gh release view v1.1.0 --json assets --jq '.assets[].name'
