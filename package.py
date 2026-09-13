@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a root-owned DEB with standard-library tar/ar support, then verify it."""
+"""Package and verify the rootless tweak, Settings bundle and icon files."""
 import gzip
 import io
 import pathlib
