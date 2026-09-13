@@ -1,1 +1,2 @@
+// Injection targets for foreground and background chat updates.
 { Filter = { Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); }; }
