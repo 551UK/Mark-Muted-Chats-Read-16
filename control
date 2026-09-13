@@ -2,7 +2,7 @@ Package: com.551uk.markmutedchatsread16
 Name: Mark Muted Chats Read 16
 Version: 1.1.0
 Architecture: iphoneos-arm64
-Description: Automatically marks muted Messages chats as read.
+Description: Marks muted Messages chats as read.
 Maintainer: 551UK
 Author: 551UK
 Section: Tweaks
