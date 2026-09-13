@@ -1,3 +1,4 @@
+// Shared preferences for the tweak and its Settings page.
 #import <Foundation/Foundation.h>
 #import <CoreFoundation/CoreFoundation.h>
 #define MR_DOMAIN CFSTR("com.551uk.markmutedchatsread16")
