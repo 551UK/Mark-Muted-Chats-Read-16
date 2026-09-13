@@ -1,0 +1,28 @@
+name: Build and release
+on:
+  push:
+    branches: [main]
+    paths: ['MutedRead.m', 'MutedRead.plist', 'control', 'build.sh', 'package.py', '.github/workflows/release.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and verify rootless package
+        run: bash build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mark-Muted-Chats-Read-16
+          path: packages/*.deb
+          if-no-files-found: error
+      - name: Publish package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^Version: //p' control)"
+          gh release create "v${version}" packages/*.deb --target "$GITHUB_SHA" \
+            --title "Mark Muted Chats Read 16 ${version}" \
+            --notes "Automatically marks muted Messages chats as read. Install, respring, and open Messages once. iOS 16 rootless. First build: needs on-device testing, including while locked. Enabled read receipts may be sent."
