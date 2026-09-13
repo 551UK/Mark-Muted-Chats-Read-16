@@ -1,3 +1,4 @@
+// Settings controls for automatic read marking.
 #import <UIKit/UIKit.h>
 #import "../ReadPreferences.h"
 @interface PSViewController : UIViewController
