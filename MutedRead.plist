@@ -1,2 +1,2 @@
-// Injection targets for foreground and background chat updates.
-{ Filter = { Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); }; }
+// Inject into Messages, SpringBoard and the always-running messages service.
+{ Filter = { Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); Executables = ("imagent"); }; }
