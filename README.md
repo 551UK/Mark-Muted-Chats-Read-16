@@ -1,21 +1,13 @@
 # Mark Muted Chats Read 16
 
-Automatically marks muted Messages app as read. Mute chats using **Hide Alerts** which is a stock iOS feature. Once you mark a chat as muted you will never get a notification or badge from that person as all messages will be marked as read.
+Automatically mark unread conversations using **Hide Alerts** as read, without changing unmuted chats. For iOS 16 Dopamine rootless.
 
-Settings includes an enable switch and GitHub link. Changes apply without a respring.
+**Install:** Download the newest DEB from Releases. In Dopamine, use **Reboot Userspace** after installing, not just respring, to reload the `imagent` message service.
 
-You can use to hide monthly network messages that you will never read or similar.
+**Behaviour:** Each incoming message event can trigger one read check for a muted chat; no continuous scans or repeated timers. On opening Messages, a separate foreground catch-up scan checks older unread muted chats.
 
-For iOS 16 Dopamine/rootless. Install the `.deb` from Releases. **Restart Userspace from the Dopamine app** to reload the background `imagent` process; a SpringBoard-only respring does not restart system messaging daemons. Enabled read receipts may be sent.
+**v1.3.1:** Adds `IMChatRegistry` unread-change event hooks used by the background messaging stack, and removes unnecessary SpringBoard injection. Retains the working `IMChat isMuted` detection. Runtime selectors are checked before hooking. The background path has not yet been confirmed on-device.
 
-Version 1.2.3 reacts once to each newly unread message event in muted conversations, with no polling or repeat timers. The background imagent hook is experimental and requires on-device testing. Unmuted chats remain untouched.
+**Troubleshooting:** Look for `[MutedRead]` entries from the `imagent` process in the system log after rebooting userspace. If there are no such entries, investigate daemon injection; if the hooks are installed but no mark attempt occurs, investigate IMCore event and chat loading. No chat content or identifiers are logged.
 
-Background injection uses the explicit `Mode = Any` filter so either the message service or Messages app can load the tweak. No periodic scans or retries.
-
-In 1.2.3, an initial catch-up no longer depends only on an early startup scan: IMChatRegistry chat-loaded events and Messages foreground activation also trigger a catch-up scan. Runtime logs include non-identifying mark attempts under `[MutedRead]`, useful for diagnosing devices where private APIs differ. Requires on-device verification; a successful build does not prove that mute detection or daemon injection runs.
-
-## 1.3.0 correction
-Replaces the incorrect assumption that iOS 16 `IMChat` implements `__ck_isMuted` with the documented modern `isMuted` and `muteUntilDate` runtime selectors, preserving legacy fallbacks. This is the likely reason all previous versions failed to mark any conversation. Toggling Hide Alerts gives the model one 200 ms opportunity to settle its state before one read attempt. There is still no periodic timer or polling. Install/respring, test an unread muted conversation. iOS 16 runtime testing remains necessary.
-
-## Background execution note
-The foreground read action is confirmed by device testing, but background execution is **not yet verified**. A successful `.deb` build and an ordinary respring cannot establish that the already-running `imagent` process injected the new dylib. First test after Dopamine's **Reboot Userspace** option, then send a new message to a muted thread while Messages stays closed. If it only clears after opening Messages, the next step is to inspect daemon injection and runtime logs rather than add speculative timers.
+**Note:** Marking iMessages read may send read receipts if enabled.

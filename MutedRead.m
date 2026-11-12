@@ -165,6 +165,37 @@ static void HookRegistryChatUpdated(Class cls) {
     class_replaceMethod(cls, sel, replacement, method_getTypeEncoding(method));
 }
 
+// Background IMCore updates its unread state through IMChatRegistry as well as IMChat.
+// These methods are present in published IMCore runtime headers; only hook when their
+// exact signature matches on the installed iOS build.
+static void HookRegistryUnread(Class cls) {
+    SEL single = sel_registerName("_updateUnreadCountForChat:");
+    if (Matches(cls, single, "v", @[@"@"])) {
+        Method m = class_getInstanceMethod(cls, single);
+        IMP original = method_getImplementation(m);
+        IMP replacement = imp_implementationWithBlock(^(id obj, id chat) {
+            ((void (*)(id, SEL, id))original)(obj, single, chat);
+            if (enabled && [chat isKindOfClass:NSClassFromString(@"IMChat")])
+                QueueChat(chat);
+        });
+        class_replaceMethod(cls, single, replacement, method_getTypeEncoding(m));
+        NSLog(@"[MutedRead] Hooked registry unread update (one argument)");
+    } else NSLog(@"[MutedRead] Registry unread update (one argument) unavailable");
+
+    SEL withNotification = sel_registerName("_updateUnreadCountForChat:shouldPostNotification:");
+    if (Matches(cls, withNotification, "v", @[@"@", @"Bc"])) {
+        Method m = class_getInstanceMethod(cls, withNotification);
+        IMP original = method_getImplementation(m);
+        IMP replacement = imp_implementationWithBlock(^(id obj, id chat, BOOL shouldPost) {
+            ((void (*)(id, SEL, id, BOOL))original)(obj, withNotification, chat, shouldPost);
+            if (enabled && [chat isKindOfClass:NSClassFromString(@"IMChat")])
+                QueueChat(chat);
+        });
+        class_replaceMethod(cls, withNotification, replacement, method_getTypeEncoding(m));
+        NSLog(@"[MutedRead] Hooked registry unread update (with notification)");
+    } else NSLog(@"[MutedRead] Registry unread update (with notification) unavailable");
+}
+
 static void HookObject(Class cls, NSString *name, BOOL conversation) {
     SEL sel = NSSelectorFromString(name);
     if (!Matches(cls, sel, "v", @[@"@"])) return;
@@ -186,10 +217,10 @@ static void Install(void) {
     enabled = MREnabled();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, PreferencesChanged, MR_CHANGED, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dlopen("/System/Library/PrivateFrameworks/IMCore.framework/IMCore", RTLD_LAZY | RTLD_GLOBAL);
-    // ChatKit supplies muted-state accessors; do not guess when they are unavailable.
-    // Load it before hooking IMCore, including within imagent.
-    void *chatKit = dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY | RTLD_GLOBAL);
-    if (!chatKit) NSLog(@"[MutedRead] ChatKit unavailable in %@", NSProcessInfo.processInfo.processName);
+    // Modern IMChat exposes isMuted/muteUntilDate in IMCore directly.
+    // Loading ChatKit in a background daemon is unnecessary and may pull in UIKit.
+    if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobileSMS"])
+        dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY);
     Class chat = NSClassFromString(@"IMChat");
     HookObject(chat, @"__ck_setMuteUntilDate:", NO);
     HookObject(chat, @"_setChatProperties:", NO);
@@ -222,6 +253,9 @@ static void Install(void) {
     HookRegistryLoaded(registry, @"chatLoadedWithChatIdentifier:chats:");
     HookRegistryLoaded(registry, @"_chatLoadedWithChatIdentifier:chats:");
     HookRegistryChatUpdated(registry);
+    HookRegistryUnread(registry);
+    // This callback occurs after an initial chat-list load, not merely at app startup.
+    HookRegistryLoaded(registry, @"loadedChats:queryID:");
     // Foreground activation is another actual event, not a repeating poll.
     // It makes older unread chats visible even if startup ran before IMCore loaded them.
     if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobileSMS"]) {
@@ -243,7 +277,6 @@ __attribute__((constructor)) static void Initialize(void) {
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
         NSString *process = NSProcessInfo.processInfo.processName;
         if (![bundle isEqualToString:@"com.apple.MobileSMS"] &&
-            ![bundle isEqualToString:@"com.apple.springboard"] &&
             ![process isEqualToString:@"imagent"]) return;
         if (NSProcessInfo.processInfo.operatingSystemVersion.majorVersion != 16) return;
         dispatch_async(dispatch_get_main_queue(), ^{ Install(); });

@@ -1,2 +1,2 @@
-// Target either the user-facing Messages/SpringBoard bundle OR the background imagent executable.
-{ Filter = { Mode = "Any"; Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); Executables = ("imagent"); }; }
+// Inject into Messages when foregrounded, and imagent for background IMCore events.
+{ Filter = { Bundles = ("com.apple.MobileSMS"); Executables = ("imagent"); }; }
