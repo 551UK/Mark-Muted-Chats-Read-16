@@ -13,3 +13,6 @@ Version 1.2.3 reacts once to each newly unread message event in muted conversati
 Background injection uses the explicit `Mode = Any` filter so either the message service or Messages app can load the tweak. No periodic scans or retries.
 
 In 1.2.3, an initial catch-up no longer depends only on an early startup scan: IMChatRegistry chat-loaded events and Messages foreground activation also trigger a catch-up scan. Runtime logs include non-identifying mark attempts under `[MutedRead]`, useful for diagnosing devices where private APIs differ. Requires on-device verification; a successful build does not prove that mute detection or daemon injection runs.
+
+## 1.3.0 correction
+Replaces the incorrect assumption that iOS 16 `IMChat` implements `__ck_isMuted` with the documented modern `isMuted` and `muteUntilDate` runtime selectors, preserving legacy fallbacks. This is the likely reason all previous versions failed to mark any conversation. Toggling Hide Alerts gives the model one 200 ms opportunity to settle its state before one read attempt. There is still no periodic timer or polling. Install/respring, test an unread muted conversation. iOS 16 runtime testing remains necessary.

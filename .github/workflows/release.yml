@@ -26,4 +26,4 @@ jobs:
           version="$(sed -n 's/^Version: //p' control)"
           gh release create "v${version}" packages/*.deb --target "$GITHUB_SHA" \
             --title "Mark Muted Chats Read 16 ${version}" \
-            --notes "Adds chat-loaded and foreground catch-up for older unread muted conversations, event-driven processing, and runtime logging. No polling; on-device validation needed. iOS 16 rootless."
+            --notes "Corrects mute detection using modern IMChat isMuted/muteUntilDate instead of legacy __ck_ names. One event-based read attempt on mute changes. No polling. Needs on-device verification."

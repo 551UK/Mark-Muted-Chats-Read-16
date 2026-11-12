@@ -29,17 +29,32 @@ static BOOL Supports(id obj, SEL sel, const char *result) {
 // A muted conversation's incoming unread-count event is enough to trigger one read.
 // No background polling, recurring timers, or repeated mark-as-read attempts.
 static BOOL IsMuted(id chat) {
-    SEL muted = sel_registerName("__ck_isMuted");
-    if (Supports(chat, muted, "Bc"))
-        return ((BOOL (*)(id, SEL))objc_msgSend)(chat, muted);
-    // Some builds expose the persisted mute-until date rather than the convenience getter.
-    SEL until = sel_registerName("__ck_muteUntilDate");
-    if (Supports(chat, until, "@")) {
-        id date = ((id (*)(id, SEL))objc_msgSend)(chat, until);
-        return [date isKindOfClass:NSDate.class] &&
-               [(NSDate *)date compare:[NSDate date]] == NSOrderedDescending;
+    // iOS 14-15 IMCore runtime headers expose isMuted / muteUntilDate directly.
+    // The former __ck_ selectors were ChatKit-only compatibility names and
+    // may not exist in iOS 16, causing every chat to be silently skipped.
+    SEL modern = sel_registerName("isMuted");
+    if (Supports(chat, modern, "Bc"))
+        return ((BOOL (*)(id, SEL))objc_msgSend)(chat, modern);
+
+    SEL dateSelector = sel_registerName("muteUntilDate");
+    if (Supports(chat, dateSelector, "@")) {
+        id muteUntil = ((id (*)(id, SEL))objc_msgSend)(chat, dateSelector);
+        if ([muteUntil isKindOfClass:NSDate.class])
+            return [(NSDate *)muteUntil timeIntervalSinceNow] > 0;
     }
-    return NO; // Unknown is not muted: never read another person's active chat.
+
+    // Compatibility fallback for older ChatKit versions only.
+    SEL legacy = sel_registerName("__ck_isMuted");
+    if (Supports(chat, legacy, "Bc"))
+        return ((BOOL (*)(id, SEL))objc_msgSend)(chat, legacy);
+
+    SEL legacyDate = sel_registerName("__ck_muteUntilDate");
+    if (Supports(chat, legacyDate, "@")) {
+        id muteUntil = ((id (*)(id, SEL))objc_msgSend)(chat, legacyDate);
+        if ([muteUntil isKindOfClass:NSDate.class])
+            return [(NSDate *)muteUntil timeIntervalSinceNow] > 0;
+    }
+    return NO; // Unknown status: do not touch unmuted conversations.
 }
 
 static void MarkChat(id chat) {
@@ -75,7 +90,12 @@ static void QueueChat(id chat) {
 }
 
 static void QueueConversation(id conversation) {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    if (!conversation || !enabled) return;
+    // CKConversation updates its IMChat properties asynchronously when Hide Alerts
+    // is toggled. Make one delayed read attempt after the mute change is committed.
+    // This is event-driven, NOT a repeating poll or retry loop.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{
         SEL sel = sel_registerName("chat");
         if (Supports(conversation, sel, "@"))
             QueueChat(((id (*)(id, SEL))objc_msgSend)(conversation, sel));
@@ -212,7 +232,8 @@ static void Install(void) {
     if (enabled) ScanChats();
     NSLog(@"[MutedRead] Installed in %@; IMChat=%@, mute API=%@, unread API=%@, read API=%@",
           NSProcessInfo.processInfo.processName, chat ? @"yes" : @"no",
-          Matches(chat, sel_registerName("__ck_isMuted"), "Bc", @[]) ? @"yes" : @"no",
+          Matches(chat, sel_registerName("isMuted"), "Bc", @[]) ? @"modern yes" :
+          (Matches(chat, sel_registerName("__ck_isMuted"), "Bc", @[]) ? @"legacy yes" : @"no"),
           Matches(chat, sel_registerName("unreadMessageCount"), "QqIi", @[]) ? @"yes" : @"no",
           Matches(chat, sel_registerName("markAllMessagesAsRead"), "v", @[]) ? @"yes" : @"no");
 }
