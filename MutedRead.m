@@ -1,4 +1,5 @@
-// Observe muted chats and use the native mark-as-read action.
+// Mark Hide Alerts conversations read in both the UI and the message-receiving daemon.
+// Never change the read state of conversations whose mute status is unknown.
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -30,7 +31,7 @@ static void MarkChat(id chat) {
     SEL muted = sel_registerName("__ck_isMuted");
     SEL unread = sel_registerName("unreadMessageCount");
     SEL mark = sel_registerName("markAllMessagesAsRead");
-    if (!Supports(chat, muted, "Bc") || !Supports(chat, unread, "Q") ||
+    if (!Supports(chat, muted, "Bc") || !Supports(chat, unread, "QqIi") ||
         !Supports(chat, mark, "v")) return;
     if (!((BOOL (*)(id, SEL))objc_msgSend)(chat, muted) ||
         !((unsigned long long (*)(id, SEL))objc_msgSend)(chat, unread)) return;
@@ -71,13 +72,24 @@ static void QueueConversation(id conversation) {
 static void ScanChats(void) {
     Class registryClass = NSClassFromString(@"IMChatRegistry");
     SEL shared = sel_registerName("sharedInstance");
-    SEL all = sel_registerName("allExistingChats");
     if (!Supports(registryClass, shared, "@")) return;
     id registry = ((id (*)(id, SEL))objc_msgSend)(registryClass, shared);
-    if (!Supports(registry, all, "@")) return;
-    id chats = ((id (*)(id, SEL))objc_msgSend)(registry, all);
-    if (![chats isKindOfClass:NSArray.class]) return;
-    for (id chat in [chats copy]) QueueChat(chat);
+    if (!registry) return;
+    // Different IMCore builds expose different cached-chat collection methods.
+    // Never enumerate unrelated objects or fabricate new chats.
+    for (NSString *selectorName in @[@"allExistingChats", @"cachedChats"]) {
+        SEL all = NSSelectorFromString(selectorName);
+        if (!Supports(registry, all, "@")) continue;
+        id chats = ((id (*)(id, SEL))objc_msgSend)(registry, all);
+        id values = chats;
+        if ([chats isKindOfClass:NSDictionary.class]) values = [chats allValues];
+        if (![values isKindOfClass:NSArray.class] && ![values isKindOfClass:NSSet.class] &&
+            ![values isKindOfClass:NSOrderedSet.class]) continue;
+        for (id chat in [values copy]) {
+            if ([chat isKindOfClass:NSClassFromString(@"IMChat")]) QueueChat(chat);
+        }
+        return;
+    }
 }
 
 static void HookObject(Class cls, NSString *name, BOOL conversation) {
@@ -100,7 +112,11 @@ static void PreferencesChanged(CFNotificationCenterRef center, void *observer, C
 static void Install(void) {
     enabled = MREnabled();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, PreferencesChanged, MR_CHANGED, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY);
+    dlopen("/System/Library/PrivateFrameworks/IMCore.framework/IMCore", RTLD_LAZY | RTLD_GLOBAL);
+    // The __ck_isMuted accessor is a ChatKit addition to IMChat.
+    // Load it before hooking IMCore, including within imagent.
+    void *chatKit = dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY | RTLD_GLOBAL);
+    if (!chatKit) NSLog(@"[MutedRead] ChatKit unavailable in %@", NSProcessInfo.processInfo.processName);
     Class chat = NSClassFromString(@"IMChat");
     HookObject(chat, @"__ck_setMuteUntilDate:", NO);
     HookObject(chat, @"_setChatProperties:", NO);
@@ -131,22 +147,31 @@ static void Install(void) {
     HookObject(conversation, @"_chatItemsDidChange:", YES);
     // Event-driven catch-up for existing muted conversations and registry reloads.
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-    for (NSString *name in @[@"UIApplicationDidBecomeActiveNotification", @"IMChatRegistryDidLoadNotification"]) {
+    for (NSString *name in @[@"UIApplicationDidBecomeActiveNotification", @"IMChatRegistryDidLoadNotification", @"__kIMChatMessageReceivedNotification"]) {
         [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
+            // IMCore can notify listeners before the updated unread count is stored.
             ScanChats();
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
+                           dispatch_get_main_queue(), ^{ ScanChats(); });
         }];
     }
     for (NSNumber *delay in @[@2, @8]) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay.longLongValue * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ ScanChats(); });
     }
-    NSLog(@"[MutedRead] Installed in %@; mute API available: %@", NSProcessInfo.processInfo.processName,
-          Matches(chat, sel_registerName("__ck_isMuted"), "Bc", @[]) ? @"yes" : @"no");
+    NSLog(@"[MutedRead] Installed in %@; IMChat=%@, mute API=%@, unread API=%@, read API=%@",
+          NSProcessInfo.processInfo.processName, chat ? @"yes" : @"no",
+          Matches(chat, sel_registerName("__ck_isMuted"), "Bc", @[]) ? @"yes" : @"no",
+          Matches(chat, sel_registerName("unreadMessageCount"), "QqIi", @[]) ? @"yes" : @"no",
+          Matches(chat, sel_registerName("markAllMessagesAsRead"), "v", @[]) ? @"yes" : @"no");
 }
 
 __attribute__((constructor)) static void Initialize(void) {
     @autoreleasepool {
         NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
-        if (![bundle isEqualToString:@"com.apple.MobileSMS"] && ![bundle isEqualToString:@"com.apple.springboard"]) return;
+        NSString *process = NSProcessInfo.processInfo.processName;
+        if (![bundle isEqualToString:@"com.apple.MobileSMS"] &&
+            ![bundle isEqualToString:@"com.apple.springboard"] &&
+            ![process isEqualToString:@"imagent"]) return;
         if (NSProcessInfo.processInfo.operatingSystemVersion.majorVersion != 16) return;
         dispatch_async(dispatch_get_main_queue(), ^{ Install(); });
     }
