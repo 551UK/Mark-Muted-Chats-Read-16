@@ -6,7 +6,7 @@ Settings includes an enable switch and GitHub link. Changes apply without a resp
 
 You can use to hide monthly network messages that you will never read or similar.
 
-For iOS 16 Dopamine/rootless. Install the `.deb` from Releases and respring once. Enabled read receipts may be sent.
+For iOS 16 Dopamine/rootless. Install the `.deb` from Releases. **Restart Userspace from the Dopamine app** to reload the background `imagent` process; a SpringBoard-only respring does not restart system messaging daemons. Enabled read receipts may be sent.
 
 Version 1.2.3 reacts once to each newly unread message event in muted conversations, with no polling or repeat timers. The background imagent hook is experimental and requires on-device testing. Unmuted chats remain untouched.
 
@@ -16,3 +16,6 @@ In 1.2.3, an initial catch-up no longer depends only on an early startup scan: I
 
 ## 1.3.0 correction
 Replaces the incorrect assumption that iOS 16 `IMChat` implements `__ck_isMuted` with the documented modern `isMuted` and `muteUntilDate` runtime selectors, preserving legacy fallbacks. This is the likely reason all previous versions failed to mark any conversation. Toggling Hide Alerts gives the model one 200 ms opportunity to settle its state before one read attempt. There is still no periodic timer or polling. Install/respring, test an unread muted conversation. iOS 16 runtime testing remains necessary.
+
+## Background execution note
+The foreground read action is confirmed by device testing, but background execution is **not yet verified**. A successful `.deb` build and an ordinary respring cannot establish that the already-running `imagent` process injected the new dylib. First test after Dopamine's **Reboot Userspace** option, then send a new message to a muted thread while Messages stays closed. If it only clears after opening Messages, the next step is to inspect daemon injection and runtime logs rather than add speculative timers.
