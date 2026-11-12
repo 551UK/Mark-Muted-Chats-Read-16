@@ -1,4 +1,4 @@
-name: Remove old build
+name: Remove superseded DEB releases
 on:
   push:
     branches: [main]
@@ -9,14 +9,19 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Keep final build and remove v1.0.0
+      - name: Keep newest published release and delete old DEBs
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+        shell: bash
         run: |
           set -euo pipefail
-          gh release view v1.1.0 --json assets --jq '.assets[].name' | grep -Fx 'com.551uk.markmutedchatsread16_1.1.0_iphoneos-arm64.deb'
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release delete v1.0.0 --yes
-          fi
-          gh release view v1.1.0 --json assets --jq '.assets[].name'
+          latest="$(gh release view --json tagName --jq '.tagName')"
+          echo "Retaining newest published release: $latest"
+          while IFS= read -r tag; do
+            if [[ "$tag" != "$latest" && "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Removing old DEB release $tag"
+              gh release delete "$tag" --yes
+            fi
+          done < <(gh release list --limit 100 --json tagName --jq '.[].tagName')
+          gh release list --limit 20
