@@ -1,2 +1,2 @@
-// Inject into Messages, SpringBoard and the always-running messages service.
-{ Filter = { Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); Executables = ("imagent"); }; }
+// Target either the user-facing Messages/SpringBoard bundle OR the background imagent executable.
+{ Filter = { Mode = "Any"; Bundles = ("com.apple.MobileSMS", "com.apple.springboard"); Executables = ("imagent"); }; }

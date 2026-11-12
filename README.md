@@ -8,4 +8,6 @@ You can use to hide monthly network messages that you will never read or similar
 
 For iOS 16 Dopamine/rootless. Install the `.deb` from Releases and respring once. Enabled read receipts may be sent.
 
-Version 1.2.1 reacts once to each newly unread message event in muted conversations, with no polling or repeat timers. The background imagent hook is experimental and requires on-device testing. Unmuted chats remain untouched.
+Version 1.2.2 reacts once to each newly unread message event in muted conversations, with no polling or repeat timers. The background imagent hook is experimental and requires on-device testing. Unmuted chats remain untouched.
+
+Background injection uses the explicit `Mode = Any` filter so either the message service or Messages app can load the tweak. No periodic scans or retries.
