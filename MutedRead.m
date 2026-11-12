@@ -47,8 +47,18 @@ static void MarkChat(id chat) {
     SEL unread = sel_registerName("unreadMessageCount");
     SEL mark = sel_registerName("markAllMessagesAsRead");
     if (!Supports(chat, unread, "QqIi") || !Supports(chat, mark, "v")) return;
+    unsigned long long count = ((unsigned long long (*)(id, SEL))objc_msgSend)(chat, unread);
+    if (!count) return;
     if (!IsMuted(chat)) return;
-    if (!((unsigned long long (*)(id, SEL))objc_msgSend)(chat, unread)) return;
+    // The mark-as-read request is asynchronous. Remember this one event briefly,
+    // rather than issuing the same request on adjacent registry callbacks.
+    static char lastAttemptKey;
+    NSNumber *last = objc_getAssociatedObject(chat, &lastAttemptKey);
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (last && now - last.doubleValue < 0.5) return;
+    objc_setAssociatedObject(chat, &lastAttemptKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSLog(@"[MutedRead] Marking muted conversation read in %@ (unread=%llu)",
+          NSProcessInfo.processInfo.processName, count);
     ((void (*)(id, SEL))objc_msgSend)(chat, mark);
 }
 
@@ -93,6 +103,46 @@ static void ScanChats(void) {
         }
         return;
     }
+}
+
+// Called by IMCore after it finishes loading previously stored chats.
+// The initial one-shot scan may run before the registry is populated.
+static void HookRegistryLoaded(Class cls, NSString *name) {
+    SEL sel = NSSelectorFromString(name);
+    if (!Matches(cls, sel, "v", @[@"@", @"@"])) return;
+    Method method = class_getInstanceMethod(cls, sel);
+    IMP original = method_getImplementation(method);
+    IMP replacement = imp_implementationWithBlock(^(id obj, id identifier, id chats) {
+        ((void (*)(id, SEL, id, id))original)(obj, sel, identifier, chats);
+        if (!enabled) return;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            id values = chats;
+            if ([values isKindOfClass:NSDictionary.class]) values = [values allValues];
+            if ([values isKindOfClass:NSArray.class] || [values isKindOfClass:NSSet.class]) {
+                for (id chat in values) {
+                    if ([chat isKindOfClass:NSClassFromString(@"IMChat")]) QueueChat(chat);
+                }
+            }
+            // The returned chat array may not contain all persisted conversations.
+            ScanChats();
+        });
+    });
+    class_replaceMethod(cls, sel, replacement, method_getTypeEncoding(method));
+    NSLog(@"[MutedRead] Installed registry load callback %@", name);
+}
+
+// IMChatRegistry publishes changes when a chat receives or updates items.
+// Two-object callback signatures are runtime-verified before hooking.
+static void HookRegistryChatUpdated(Class cls) {
+    SEL sel = sel_registerName("chat:updated:");
+    if (!Matches(cls, sel, "v", @[@"@", @"@"])) return;
+    Method method = class_getInstanceMethod(cls, sel);
+    IMP original = method_getImplementation(method);
+    IMP replacement = imp_implementationWithBlock(^(id obj, id chat, id update) {
+        ((void (*)(id, SEL, id, id))original)(obj, sel, chat, update);
+        if (enabled && [chat isKindOfClass:NSClassFromString(@"IMChat")]) QueueChat(chat);
+    });
+    class_replaceMethod(cls, sel, replacement, method_getTypeEncoding(method));
 }
 
 static void HookObject(Class cls, NSString *name, BOOL conversation) {
@@ -148,8 +198,17 @@ static void Install(void) {
     HookObject(conversation, @"setMutedUntilDate:", YES);
     HookObject(conversation, @"_chatPropertiesChanged:", YES);
     HookObject(conversation, @"_chatItemsDidChange:", YES);
-    // A single catch-up on startup, and another only if the user enables the tweak.
-    // All subsequent reads are triggered by unread-count/message events above.
+    Class registry = NSClassFromString(@"IMChatRegistry");
+    HookRegistryLoaded(registry, @"chatLoadedWithChatIdentifier:chats:");
+    HookRegistryLoaded(registry, @"_chatLoadedWithChatIdentifier:chats:");
+    HookRegistryChatUpdated(registry);
+    // Foreground activation is another actual event, not a repeating poll.
+    // It makes older unread chats visible even if startup ran before IMCore loaded them.
+    if ([NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.MobileSMS"]) {
+        [NSNotificationCenter.defaultCenter addObserverForName:@"UIApplicationDidBecomeActiveNotification"
+                                                        object:nil queue:NSOperationQueue.mainQueue
+                                                    usingBlock:^(__unused NSNotification *note) { ScanChats(); }];
+    }
     if (enabled) ScanChats();
     NSLog(@"[MutedRead] Installed in %@; IMChat=%@, mute API=%@, unread API=%@, read API=%@",
           NSProcessInfo.processInfo.processName, chat ? @"yes" : @"no",
