@@ -26,38 +26,41 @@ static BOOL Supports(id obj, SEL sel, const char *result) {
     return obj && Matches(object_getClass(obj), sel, result, @[]);
 }
 
+// A muted conversation's incoming unread-count event is enough to trigger one read.
+// No background polling, recurring timers, or repeated mark-as-read attempts.
+static BOOL IsMuted(id chat) {
+    SEL muted = sel_registerName("__ck_isMuted");
+    if (Supports(chat, muted, "Bc"))
+        return ((BOOL (*)(id, SEL))objc_msgSend)(chat, muted);
+    // Some builds expose the persisted mute-until date rather than the convenience getter.
+    SEL until = sel_registerName("__ck_muteUntilDate");
+    if (Supports(chat, until, "@")) {
+        id date = ((id (*)(id, SEL))objc_msgSend)(chat, until);
+        return [date isKindOfClass:NSDate.class] &&
+               [(NSDate *)date compare:[NSDate date]] == NSOrderedDescending;
+    }
+    return NO; // Unknown is not muted: never read another person's active chat.
+}
+
 static void MarkChat(id chat) {
     if (!enabled) return;
-    SEL muted = sel_registerName("__ck_isMuted");
     SEL unread = sel_registerName("unreadMessageCount");
     SEL mark = sel_registerName("markAllMessagesAsRead");
-    if (!Supports(chat, muted, "Bc") || !Supports(chat, unread, "QqIi") ||
-        !Supports(chat, mark, "v")) return;
-    if (!((BOOL (*)(id, SEL))objc_msgSend)(chat, muted) ||
-        !((unsigned long long (*)(id, SEL))objc_msgSend)(chat, unread)) return;
-    // Bound feedback from Apple's own unread-count updates; never alter counts ourselves.
-    static char lastAttemptKey;
-    NSNumber *last = objc_getAssociatedObject(chat, &lastAttemptKey);
-    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-    if (last && now - last.doubleValue < 1.0) return;
-    objc_setAssociatedObject(chat, &lastAttemptKey, @(now), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!Supports(chat, unread, "QqIi") || !Supports(chat, mark, "v")) return;
+    if (!IsMuted(chat)) return;
+    if (!((unsigned long long (*)(id, SEL))objc_msgSend)(chat, unread)) return;
     ((void (*)(id, SEL))objc_msgSend)(chat, mark);
 }
 
 static void QueueChat(id chat) {
     if (!chat) return;
+    // Coalesce multiple callbacks for the same incoming event onto one main-queue pass.
     dispatch_async(dispatch_get_main_queue(), ^{
         static char pendingKey;
         if (objc_getAssociatedObject(chat, &pendingKey)) return;
         objc_setAssociatedObject(chat, &pendingKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0), dispatch_get_main_queue(), ^{
-            MarkChat(chat); // Recheck mute status after updates, including an intervening unmute.
-            // A single catch-up covers bursts arriving during the feedback cooldown.
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1200 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-                MarkChat(chat);
-                objc_setAssociatedObject(chat, &pendingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            });
-        });
+        MarkChat(chat);
+        objc_setAssociatedObject(chat, &pendingKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     });
 }
 
@@ -113,14 +116,14 @@ static void Install(void) {
     enabled = MREnabled();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, PreferencesChanged, MR_CHANGED, NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
     dlopen("/System/Library/PrivateFrameworks/IMCore.framework/IMCore", RTLD_LAZY | RTLD_GLOBAL);
-    // The __ck_isMuted accessor is a ChatKit addition to IMChat.
+    // ChatKit supplies muted-state accessors; do not guess when they are unavailable.
     // Load it before hooking IMCore, including within imagent.
     void *chatKit = dlopen("/System/Library/PrivateFrameworks/ChatKit.framework/ChatKit", RTLD_LAZY | RTLD_GLOBAL);
     if (!chatKit) NSLog(@"[MutedRead] ChatKit unavailable in %@", NSProcessInfo.processInfo.processName);
     Class chat = NSClassFromString(@"IMChat");
     HookObject(chat, @"__ck_setMuteUntilDate:", NO);
     HookObject(chat, @"_setChatProperties:", NO);
-    HookObject(chat, @"updateMessage:", NO);
+    HookObject(chat, @"updateMessage:", NO); // Event-driven fallback if unread count is not surfaced.
     SEL count = sel_registerName("_setDBUnreadCount:");
     if (Matches(chat, count, "v", @[@"Q"])) {
         Method m = class_getInstanceMethod(chat, count);
@@ -145,19 +148,9 @@ static void Install(void) {
     HookObject(conversation, @"setMutedUntilDate:", YES);
     HookObject(conversation, @"_chatPropertiesChanged:", YES);
     HookObject(conversation, @"_chatItemsDidChange:", YES);
-    // Event-driven catch-up for existing muted conversations and registry reloads.
-    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-    for (NSString *name in @[@"UIApplicationDidBecomeActiveNotification", @"IMChatRegistryDidLoadNotification", @"__kIMChatMessageReceivedNotification"]) {
-        [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(__unused NSNotification *note) {
-            // IMCore can notify listeners before the updated unread count is stored.
-            ScanChats();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC),
-                           dispatch_get_main_queue(), ^{ ScanChats(); });
-        }];
-    }
-    for (NSNumber *delay in @[@2, @8]) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay.longLongValue * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ ScanChats(); });
-    }
+    // A single catch-up on startup, and another only if the user enables the tweak.
+    // All subsequent reads are triggered by unread-count/message events above.
+    if (enabled) ScanChats();
     NSLog(@"[MutedRead] Installed in %@; IMChat=%@, mute API=%@, unread API=%@, read API=%@",
           NSProcessInfo.processInfo.processName, chat ? @"yes" : @"no",
           Matches(chat, sel_registerName("__ck_isMuted"), "Bc", @[]) ? @"yes" : @"no",

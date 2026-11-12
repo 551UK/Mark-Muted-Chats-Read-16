@@ -8,4 +8,4 @@ You can use to hide monthly network messages that you will never read or similar
 
 For iOS 16 Dopamine/rootless. Install the `.deb` from Releases and respring once. Enabled read receipts may be sent.
 
-Version 1.2.0 also watches the background `imagent` service, so unread muted chats can be caught while Messages is suspended. This is an iOS 16 rootless update; test on-device because private Apple framework behaviour varies. Normal chats are never intentionally marked read. Hide Alerts remains responsible for silencing alerts; the tweak addresses unread state and badges.
+Version 1.2.1 reacts once to each newly unread message event in muted conversations, with no polling or repeat timers. The background imagent hook is experimental and requires on-device testing. Unmuted chats remain untouched.
